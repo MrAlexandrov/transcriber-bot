@@ -5,7 +5,7 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
-from bot.config import BOT_TOKEN, ROOT_ID
+from bot.config import BOT_TOKEN, ROOT_ID, WEBHOOK_PORT, WEBHOOK_SECRET, WEBHOOK_URL
 from bot.whisper_client import WhisperUnavailableError, whisper_client
 
 logger = logging.getLogger(__name__)
@@ -57,5 +57,10 @@ def main() -> None:
     app.add_handler(
         MessageHandler(filters.VOICE | filters.VIDEO_NOTE, handle_voice)
     )
-    logger.info("Bot started")
-    app.run_polling()
+    logger.info("Bot started (webhook mode)")
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=WEBHOOK_PORT,
+        webhook_url=WEBHOOK_URL,
+        secret_token=WEBHOOK_SECRET,
+    )
