@@ -1,43 +1,36 @@
 DOCKER_COMPOSE = docker compose
 
+.PHONY: install
 install:
 	poetry install
 
+.PHONY: run
 run:
 	poetry run python main.py
 
+.PHONY: clean
 clean:
 	find . -type f -name '*.pyc' -delete
 	find . -type d -name '__pycache__' -exec rm -rf {} +
 
+.PHONY: up
 up:
-	$(DOCKER_COMPOSE) down
-	$(DOCKER_COMPOSE) up -d
-	$(DOCKER_COMPOSE) logs -f
+	$(DOCKER_COMPOSE) up -d --build
 
-deploy:
-	$(DOCKER_COMPOSE) down
-	$(DOCKER_COMPOSE) build --no-cache
-	$(DOCKER_COMPOSE) up -d
-
+.PHONY: down
 down:
 	$(DOCKER_COMPOSE) down
 
+.PHONY: logs
 logs:
 	$(DOCKER_COMPOSE) logs -f
 
+.PHONY: restart
 restart:
-	$(DOCKER_COMPOSE) down
-	$(DOCKER_COMPOSE) build --no-cache
-	$(DOCKER_COMPOSE) up -d
+	$(DOCKER_COMPOSE) up -d --build
 	$(DOCKER_COMPOSE) logs -f
 
-docker-clean:
-	$(DOCKER_COMPOSE) down --rmi all --volumes --remove-orphans
-	docker system prune -f
-
+.phony: proto
 proto:
 	poetry run python -m grpc_tools.protoc -I proto --python_out=proto --grpc_python_out=proto proto/whisper.proto
 	sed -i.bak 's/^import whisper_pb2/from proto import whisper_pb2/' proto/whisper_pb2_grpc.py && rm -f proto/whisper_pb2_grpc.py.bak
-
-.PHONY: install run clean up deploy down restart docker-clean proto
