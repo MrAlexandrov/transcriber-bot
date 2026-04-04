@@ -93,7 +93,7 @@ make down     # Stop bot services
 make logs     # Follow bot logs
 make restart  # Restart without rebuild
 make deploy   # Full rebuild without cache
-make proto-go # Regenerate Go gRPC stubs (local dev only)
+make proto    # Regenerate Go gRPC stubs (local dev only)
 ```
 
 ## Environment Variables

@@ -30,7 +30,7 @@ make up            # start bot
 make logs          # bot logs
 make down          # stop bot
 make deploy        # full rebuild --no-cache
-make proto-go      # regenerate Go stubs (local dev only, Docker builds them)
+make proto         # regenerate Go stubs (local dev only, Docker builds them)
 ```
 
 ## Architecture Notes
@@ -56,7 +56,7 @@ make proto-go      # regenerate Go stubs (local dev only, Docker builds them)
 When changing `proto/whisper.proto`, regenerate stubs:
 
 ```bash
-make proto-go   # Go stubs (also regenerated in bot/Dockerfile)
+make proto   # Go stubs (also regenerated in bot/Dockerfile)
 ```
 
 Generated files — do not edit manually:

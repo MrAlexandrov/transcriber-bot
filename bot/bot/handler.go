@@ -12,8 +12,8 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	pb "transcriber-bot/gen/whisper"
 	"transcriber-bot/config"
+	pb "transcriber-bot/gen/whisper"
 	"transcriber-bot/whisper"
 )
 
