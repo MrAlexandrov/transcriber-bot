@@ -6,11 +6,11 @@ RUN apk add --no-cache protobuf-dev && \
 
 WORKDIR /build
 
-COPY bot-go/go.mod bot-go/go.sum ./
+COPY bot/go.mod bot/go.sum ./
 RUN go mod download
 
 COPY proto/ /proto/
-COPY bot-go/ .
+COPY bot/ .
 
 RUN mkdir -p gen/whisper && \
     protoc -I /proto \

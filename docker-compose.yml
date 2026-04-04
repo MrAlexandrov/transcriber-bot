@@ -29,7 +29,7 @@ services:
   bot:
     build:
       context: .
-      dockerfile: bot-go/Dockerfile
+      dockerfile: bot/Dockerfile
     env_file: .env
     environment:
       - WHISPER_GRPC_HOST=whisper
