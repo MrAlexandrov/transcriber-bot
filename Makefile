@@ -36,6 +36,8 @@ proto:
 		-I . \
 		--python_out=. \
 		--grpc_python_out=. \
+		--mypy_out=. \
+		--mypy_grpc_out=. \
 		proto/whisper.proto
 
 # Regenerate Go gRPC stubs into bot-go/gen/whisper/

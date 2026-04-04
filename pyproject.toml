@@ -15,6 +15,7 @@ faster-whisper = "^1.0"
 
 [tool.poetry.group.dev.dependencies]
 grpcio-tools = "^1.62"
+mypy-protobuf = "^3.6"
 
 [build-system]
 requires = ["poetry-core"]

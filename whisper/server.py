@@ -3,6 +3,7 @@
 import logging
 import os
 import tempfile
+from collections.abc import Iterator
 
 import grpc
 
@@ -20,7 +21,11 @@ class TranscriptionServicer(whisper_pb2_grpc.TranscriptionServiceServicer):
         self._model = WhisperModel(model_size, device="cpu", compute_type="int8")
         logger.info("Whisper model loaded.")
 
-    def Transcribe(self, request_iterator, context):
+    def Transcribe(
+        self,
+        request_iterator: Iterator[whisper_pb2.TranscribeChunk],
+        context: grpc.ServicerContext,
+    ) -> whisper_pb2.TranscribeResponse:
         tmp_path = None
         try:
             first_chunk = next(request_iterator, None)
