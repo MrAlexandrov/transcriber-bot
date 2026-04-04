@@ -8,11 +8,18 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	pb "transcriber-bot/gen/whisper"
 	"transcriber-bot/config"
 	"transcriber-bot/whisper"
+)
+
+const (
+	pollInterval = 5 * time.Second
+	pollDeadline = 3 * time.Hour
 )
 
 type Bot struct {
@@ -68,7 +75,7 @@ func (b *Bot) handle(update tgbotapi.Update) {
 
 	if msg.IsCommand() {
 		if msg.Command() == "start" {
-			b.reply(msg, "Привет! Пересылай мне голосовые сообщения, кружочки или видео — я расшифрую их в текст.")
+			b.replyTo(msg, "Привет! Пересылай мне голосовые сообщения, кружочки или видео — я расшифрую их в текст.")
 		}
 		return
 	}
@@ -78,28 +85,66 @@ func (b *Bot) handle(update tgbotapi.Update) {
 		return
 	}
 
-	statusMsg, err := b.api.Send(tgbotapi.NewMessage(msg.Chat.ID, "⏳ Транскрибирую..."))
+	data, err := b.downloadFile(fileID)
 	if err != nil {
-		slog.Error("send status", "error", err)
+		slog.Error("download file", "error", err)
+		b.replyTo(msg, "Не удалось скачать файл.")
 		return
 	}
 
-	text, err := b.transcribe(fileID, format)
+	jobID, queuePos, err := b.client.Submit(data, format)
 	if err != nil {
 		var unavail *whisper.UnavailableError
 		if errors.As(err, &unavail) {
-			b.edit(msg.Chat.ID, statusMsg.MessageID, "Сервис транскрипции недоступен, попробуй позже.")
+			b.replyTo(msg, "Сервис транскрипции недоступен, попробуй позже.")
 		} else {
-			slog.Error("transcription failed", "error", err)
-			b.edit(msg.Chat.ID, statusMsg.MessageID, "Произошла ошибка при транскрипции.")
+			slog.Error("submit job", "error", err)
+			b.replyTo(msg, "Произошла ошибка при отправке на расшифровку.")
 		}
 		return
 	}
 
-	if text == "" {
-		text = "(тишина)"
+	statusText := "⏳ Расшифровываю..."
+	if queuePos > 1 {
+		statusText = fmt.Sprintf("⏳ В очереди (позиция %d), подожди немного...", queuePos)
 	}
-	b.edit(msg.Chat.ID, statusMsg.MessageID, text)
+	statusMsg := b.replyTo(msg, statusText)
+
+	go b.pollAndUpdate(msg, statusMsg.MessageID, jobID)
+}
+
+// pollAndUpdate periodically polls the job status and edits the status message when done.
+func (b *Bot) pollAndUpdate(origMsg *tgbotapi.Message, statusMsgID int, jobID string) {
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+	deadline := time.After(pollDeadline)
+
+	for {
+		select {
+		case <-deadline:
+			b.edit(origMsg.Chat.ID, statusMsgID, "Превышено время ожидания (3 часа). Попробуй ещё раз.")
+			return
+		case <-ticker.C:
+			result, err := b.client.GetStatus(jobID)
+			if err != nil {
+				slog.Warn("poll status", "job_id", jobID, "error", err)
+				continue
+			}
+			switch result.Status {
+			case pb.JobStatus_DONE:
+				text := result.Text
+				if text == "" {
+					text = "(тишина)"
+				}
+				b.edit(origMsg.Chat.ID, statusMsgID, text)
+				return
+			case pb.JobStatus_FAILED:
+				slog.Error("job failed", "job_id", jobID, "error", result.Error)
+				b.edit(origMsg.Chat.ID, statusMsgID, "Произошла ошибка при расшифровке.")
+				return
+			}
+		}
+	}
 }
 
 func extractFile(msg *tgbotapi.Message) (fileID, format string) {
@@ -120,46 +165,48 @@ func extractFile(msg *tgbotapi.Message) (fileID, format string) {
 	return "", ""
 }
 
-func (b *Bot) transcribe(fileID, format string) (string, error) {
+func (b *Bot) downloadFile(fileID string) ([]byte, error) {
 	file, err := b.api.GetFile(tgbotapi.FileConfig{FileID: fileID})
 	if err != nil {
-		return "", fmt.Errorf("get file info: %w", err)
+		return nil, fmt.Errorf("get file info: %w", err)
 	}
 
-	var data []byte
 	if b.cfg.LocalAPIURL != "" {
-		// In local mode file_path is an absolute path on the shared volume — read directly.
 		slog.Info("reading local file", "path", file.FilePath)
-		data, err = os.ReadFile(file.FilePath)
+		data, err := os.ReadFile(file.FilePath)
 		if err != nil {
-			return "", fmt.Errorf("read local file: %w", err)
+			return nil, fmt.Errorf("read local file: %w", err)
 		}
-	} else {
-		fileURL := file.Link(b.cfg.BotToken)
-		slog.Info("downloading file", "url", fileURL)
-		resp, err := http.Get(fileURL) //nolint:noctx
-		if err != nil {
-			return "", fmt.Errorf("download: %w", err)
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			return "", fmt.Errorf("download failed: status %d, body: %s", resp.StatusCode, body)
-		}
-		data, err = io.ReadAll(resp.Body)
-		if err != nil {
-			return "", fmt.Errorf("read body: %w", err)
-		}
+		return data, nil
 	}
 
-	slog.Info("got audio", "bytes", len(data), "format", format)
-	return b.client.Transcribe(data, format)
+	fileURL := file.Link(b.cfg.BotToken)
+	slog.Info("downloading file", "url", fileURL)
+	resp, err := http.Get(fileURL) //nolint:noctx
+	if err != nil {
+		return nil, fmt.Errorf("download: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("download failed: status %d, body: %s", resp.StatusCode, body)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read body: %w", err)
+	}
+	slog.Info("got audio", "bytes", len(data))
+	return data, nil
 }
 
-func (b *Bot) reply(msg *tgbotapi.Message, text string) {
-	if _, err := b.api.Send(tgbotapi.NewMessage(msg.Chat.ID, text)); err != nil {
+func (b *Bot) replyTo(orig *tgbotapi.Message, text string) tgbotapi.Message {
+	m := tgbotapi.NewMessage(orig.Chat.ID, text)
+	m.ReplyToMessageID = orig.MessageID
+	sent, err := b.api.Send(m)
+	if err != nil {
 		slog.Error("reply", "error", err)
 	}
+	return sent
 }
 
 func (b *Bot) edit(chatID int64, msgID int, text string) {

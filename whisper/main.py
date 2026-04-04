@@ -20,10 +20,14 @@ _50MB = 50 * 1024 * 1024
 def serve():
     port = os.getenv("GRPC_PORT", "50053")
     server = grpc.server(
-        futures.ThreadPoolExecutor(max_workers=4),
+        # Multiple workers to receive files concurrently while one transcribes.
+        futures.ThreadPoolExecutor(max_workers=8),
         options=[
             ("grpc.max_receive_message_length", _50MB),
             ("grpc.max_send_message_length", _50MB),
+            ("grpc.keepalive_time_ms", 30_000),
+            ("grpc.keepalive_timeout_ms", 10_000),
+            ("grpc.keepalive_permit_without_calls", 1),
         ],
     )
     whisper_pb2_grpc.add_TranscriptionServiceServicer_to_server(
@@ -31,7 +35,7 @@ def serve():
     )
     server.add_insecure_port(f"[::]:{port}")
     server.start()
-    logger.info(f"Whisper gRPC server started on port {port}")
+    logger.info("Whisper gRPC server started on port %s", port)
     server.wait_for_termination()
 
 

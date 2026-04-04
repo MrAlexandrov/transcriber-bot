@@ -14,14 +14,23 @@ import (
 )
 
 const (
-	chunkSize = 1 * 1024 * 1024 // 1 MB
-	timeout   = 120 * time.Second
+	chunkSize     = 1 * 1024 * 1024 // 1 MB per chunk
+	uploadTimeout = 120 * time.Second
+	pollTimeout   = 10 * time.Second
 )
 
+// UnavailableError is returned when the Whisper service is unreachable.
 type UnavailableError struct{ cause error }
 
 func (e *UnavailableError) Error() string {
 	return fmt.Sprintf("whisper service unavailable: %v", e.cause)
+}
+
+// JobResult holds the outcome of an async transcription job.
+type JobResult struct {
+	Status pb.JobStatus
+	Text   string
+	Error  string
 }
 
 type Client struct {
@@ -44,15 +53,48 @@ func (c *Client) Close() error {
 	return c.conn.Close()
 }
 
-func (c *Client) Transcribe(audioData []byte, format string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+// Submit uploads audio and returns a job ID immediately.
+// queuePosition indicates where in the queue this job is (1 = will run next).
+func (c *Client) Submit(audioData []byte, format string) (jobID string, queuePosition int, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), uploadTimeout)
 	defer cancel()
 
-	stream, err := c.stub.Transcribe(ctx)
+	stream, err := c.stub.Submit(ctx)
 	if err != nil {
-		return "", c.wrapErr(err)
+		return "", 0, c.wrapErr(err)
 	}
 
+	if err := c.sendChunks(stream, audioData, format); err != nil {
+		return "", 0, err
+	}
+
+	resp, err := stream.CloseAndRecv()
+	if err != nil {
+		return "", 0, c.wrapErr(err)
+	}
+	return resp.JobId, int(resp.QueuePosition), nil
+}
+
+// GetStatus polls the status of a submitted job.
+func (c *Client) GetStatus(jobID string) (*JobResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), pollTimeout)
+	defer cancel()
+
+	resp, err := c.stub.GetStatus(ctx, &pb.StatusRequest{JobId: jobID})
+	if err != nil {
+		return nil, c.wrapErr(err)
+	}
+	return &JobResult{
+		Status: resp.Status,
+		Text:   resp.Text,
+		Error:  resp.Error,
+	}, nil
+}
+
+// sendChunks sends audio data over a client-streaming RPC.
+func (c *Client) sendChunks(stream interface {
+	Send(*pb.TranscribeChunk) error
+}, audioData []byte, format string) error {
 	for i := 0; i < len(audioData); i += chunkSize {
 		end := min(i+chunkSize, len(audioData))
 		chunk := &pb.TranscribeChunk{Data: audioData[i:end]}
@@ -60,15 +102,10 @@ func (c *Client) Transcribe(audioData []byte, format string) (string, error) {
 			chunk.Format = format
 		}
 		if err := stream.Send(chunk); err != nil {
-			return "", c.wrapErr(err)
+			return c.wrapErr(err)
 		}
 	}
-
-	resp, err := stream.CloseAndRecv()
-	if err != nil {
-		return "", c.wrapErr(err)
-	}
-	return resp.Text, nil
+	return nil
 }
 
 func (c *Client) wrapErr(err error) error {

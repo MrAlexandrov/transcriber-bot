@@ -3,4 +3,5 @@
 *_pb2_grpc.pyi
 *_pb2.py
 *_pb2.pyi
-bot-go/gen/
+
+bot/gen/
