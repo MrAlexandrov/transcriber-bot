@@ -1,5 +1,4 @@
 .venv
-typings
 *.md
 to-transcribe
 .claude
